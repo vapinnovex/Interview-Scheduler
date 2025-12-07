@@ -1,0 +1,442 @@
+# Agentic AI Interview System - Complete Development Plan
+
+## Project Overview
+
+An end-to-end AI-powered interview platform with two modes:
+1. **Fully AI-based Interview**: AI agent conducts the entire technical interview
+2. **AI-assisted Interview**: Human interviewer with real-time AI assistance
+
+---
+
+## Tech Stack
+
+### Frontend
+- **Framework**: React 18+ with TypeScript + Vite
+- **Styling**: Tailwind CSS
+- **State Management**: Zustand
+- **Routing**: React Router v6
+- **Real-time Communication**: Socket.IO Client
+- **Video/Audio**: WebRTC + MediaRecorder API
+- **HTTP Client**: Axios
+
+### Backend
+- **API Server**: FastAPI (Python)
+- **Database**: MongoDB
+- **Real-time**: Socket.IO (Python)
+- **Task Queue**: Celery + Redis
+- **File Storage**: AWS S3 / Cloudinary
+
+### AI & Processing
+- **LLM**: OpenAI GPT-4o / Anthropic Claude (via API)
+- **Speech-to-Text**: OpenAI Whisper / AssemblyAI
+- **Text-to-Speech**: OpenAI TTS / ElevenLabs
+- **Resume Parser**: PyMuPDF + GPT-4 for extraction
+- **Vector DB**: Pinecone / Qdrant (for resume embeddings)
+
+### Infrastructure
+- **Email Service**: Resend / SendGrid
+- **Video Processing**: FFmpeg
+- **Deployment**: Docker + Docker Compose
+- **Hosting**: AWS EC2 / DigitalOcean / Railway
+
+---
+
+## Required API Keys & Services
+
+1. **OpenAI API Key** - For GPT-4, Whisper, TTS
+2. **Anthropic API Key** (Optional) - Alternative LLM
+3. **Pinecone API Key** - Vector database for embeddings
+4. **SendGrid/Resend API Key** - Email delivery
+5. **AssemblyAI API Key** (Optional) - Alternative STT
+6. **ElevenLabs API Key** (Optional) - High-quality TTS
+7. **AWS Credentials** (Optional) - S3 for file storage
+8. **MongoDB Atlas Connection String** - Database
+9. **Redis URL** - Task queue and caching
+
+---
+
+## Monorepo Folder Structure
+
+```
+agentic-ai-interview/
+├── admin-frontend/              # React Admin Panel
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── store/
+│   │   ├── services/
+│   │   ├── utils/
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── public/
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
+│   └── tailwind.config.js
+│
+├── candidate-frontend/          # React Candidate Portal
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── store/
+│   │   ├── services/
+│   │   ├── utils/
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── public/
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
+│   └── tailwind.config.js
+│
+├── interview-analysis/          # Analysis & Reporting Module
+│   ├── src/
+│   │   ├── analyzers/
+│   │   │   ├── performance_analyzer.py
+│   │   │   ├── qa_extractor.py
+│   │   │   └── report_generator.py
+│   │   ├── models/
+│   │   │   └── report_schema.py
+│   │   └── utils/
+│   │       ├── scoring.py
+│   │       └── evaluation.py
+│   ├── requirements.txt
+│   └── __init__.py
+│
+├── backend/                     # FastAPI Backend
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.py
+│   │   │   ├── candidates.py
+│   │   │   ├── interviews.py
+│   │   │   └── reports.py
+│   │   ├── core/
+│   │   │   ├── __init__.py
+│   │   │   ├── config.py
+│   │   │   ├── database.py
+│   │   │   └── security.py
+│   │   ├── models/
+│   │   │   ├── __init__.py
+│   │   │   ├── user.py
+│   │   │   ├── candidate.py
+│   │   │   ├── interview.py
+│   │   │   ├── transcript.py
+│   │   │   └── report.py
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   ├── resume_parser.py
+│   │   │   ├── email_service.py
+│   │   │   ├── ai_interviewer.py
+│   │   │   ├── transcription.py
+│   │   │   └── tts_service.py
+│   │   ├── sockets/
+│   │   │   ├── __init__.py
+│   │   │   ├── websocket.py
+│   │   │   └── events.py
+│   │   ├── utils/
+│   │   │   ├── __init__.py
+│   │   │   └── helpers.py
+│   │   └── main.py
+│   ├── requirements.txt
+│   └── Dockerfile
+│
+├── docker-compose.yml
+├── .env.example
+├── .gitignore
+├── README.md
+└── docs/
+    └── module-prompts/          # Module-wise development prompts
+        ├── module-01.txt
+        ├── module-02.txt
+        ├── ...
+        └── module-12.txt
+```
+
+---
+
+## Module-wise Development Plan (12 Modules)
+
+### **Module 1: Monorepo Setup & Database Schema** (Days 1-2)
+**Deliverable**: Working MongoDB connection, complete monorepo structure
+
+**Tasks**:
+- Initialize monorepo with all four modules
+- Set up React + TypeScript + Vite for both frontends
+- Configure Tailwind CSS for frontends
+- Set up MongoDB collections: users, interviews, candidates, transcripts, reports
+- Configure environment variables
+- Docker setup for local development
+
+**Testing**: All modules start successfully, MongoDB connected
+
+---
+
+### **Module 2: Admin Authentication & Dashboard** (Days 3-4)
+**Deliverable**: Functional admin login and empty dashboard
+
+**Tasks**:
+- Admin user registration/login with JWT (Backend)
+- Protected routes in React Router
+- Basic dashboard layout with Tailwind CSS
+- User session management with Zustand
+
+**Testing**: Admin can register, login, and see dashboard
+
+---
+
+### **Module 3: Resume Upload & Parsing** (Days 5-7)
+**Deliverable**: Upload PDF resumes, extract candidate details, store in DB
+
+**Tasks**:
+- File upload endpoint (FastAPI)
+- PDF parsing with PyMuPDF
+- GPT-4 extraction prompt for: name, skills, experience, projects, achievements
+- Store extracted data in MongoDB candidates collection
+- Display parsed data in admin panel
+
+**Testing**: Upload resume → See extracted candidate profile
+
+---
+
+### **Module 4: Interview Scheduling System** (Days 8-10)
+**Deliverable**: Create interviews with JD, candidate, type, and send email
+
+**Tasks**:
+- Interview creation form (Admin Frontend)
+- API endpoint to create interview with unique ID
+- Store: Job Description, Candidate ID, Interview Type (AI/Assisted), Expiry Date
+- Email template with interview details
+- SendGrid/Resend integration
+- Send email to candidate with Interview ID and link
+
+**Testing**: Schedule interview → Candidate receives email with correct details
+
+---
+
+### **Module 5: Candidate Portal - Entry & Device Checks** (Days 11-13)
+**Deliverable**: Candidate can enter Interview ID, pass device checks, see instructions
+
+**Tasks**:
+- Candidate homepage with Interview ID input
+- Validate Interview ID and expiry
+- Device permission checks (camera, mic, network test)
+- Instructions page
+- Navigation flow: Home → Validate → Device Check → Instructions → Waiting Room
+
+**Testing**: Enter valid ID → Complete all checks → Reach waiting room
+
+---
+
+### **Module 6: WebSocket Real-time Communication** (Days 14-16)
+**Deliverable**: Establish WebSocket connection between candidate and backend
+
+**Tasks**:
+- Socket.IO server setup (FastAPI)
+- Client-side Socket.IO integration
+- Events: connect, disconnect, join_interview, send_message, receive_message
+- Room management (each interview = separate room)
+- Connection status indicators
+
+**Testing**: Candidate connects → Real-time message exchange works
+
+---
+
+### **Module 7: Audio/Video Capture & Streaming** (Days 17-19)
+**Deliverable**: Capture candidate video/audio, stream to backend
+
+**Tasks**:
+- WebRTC setup for video display
+- MediaRecorder API for audio recording
+- Send audio chunks via WebSocket (base64 or binary)
+- Backend receives and temporarily stores audio chunks
+- Display live video feed in interview UI
+
+**Testing**: Start interview → See video → Audio reaches backend
+
+---
+
+### **Module 8: Speech-to-Text Transcription** (Days 20-22)
+**Deliverable**: Real-time transcription of candidate speech
+
+**Tasks**:
+- Integrate Whisper API / AssemblyAI
+- Process audio chunks and get transcription
+- Send transcription back to frontend via WebSocket
+- Display live transcript on UI
+- Store transcript segments in MongoDB
+
+**Testing**: Candidate speaks → See real-time transcript
+
+---
+
+### **Module 9: AI Interviewer Agent (Fully AI Mode)** (Days 23-27)
+**Deliverable**: AI conducts autonomous interview, asks relevant questions
+
+**Tasks**:
+- AI Agent prompt engineering:
+  - System prompt with JD, candidate profile, interview guidelines
+  - Question generation based on context
+  - Follow-up question logic
+- GPT-4 integration for conversation
+- Text-to-Speech for AI responses (OpenAI TTS)
+- Play AI audio response to candidate
+- Maintain conversation history in context
+- Pause/End interview controls
+
+**Testing**: Start AI interview → AI asks questions → Candidate responds → AI asks follow-ups
+
+---
+
+### **Module 10: Interview Analysis & Report Generation** (Days 28-31)
+**Deliverable**: Generate comprehensive interview report after completion
+
+**Tasks**:
+- Post-interview analysis pipeline (interview-analysis module)
+- GPT-4 prompt for analysis:
+  - Question-Answer mapping
+  - Performance evaluation
+  - Strengths and weaknesses
+  - Technical competency assessment
+  - Final recommendation (hire/reject/maybe)
+- Generate structured report JSON
+- Store report in MongoDB
+- Display report in admin dashboard
+- Export report as PDF
+
+**Testing**: Complete interview → See detailed analysis report
+
+---
+
+### **Module 11: AI-Assisted Interview Mode** (Days 32-36)
+**Deliverable**: 3-participant mode with real-time AI suggestions
+
+**Tasks**:
+- Multi-participant WebSocket rooms (Interviewer, Candidate, AI)
+- Interviewer dashboard with:
+  - Candidate video
+  - Live transcript
+  - AI suggestion panel
+  - Manual question input
+- AI listens to conversation context
+- Generate next question suggestions in real-time
+- Interviewer can accept/modify/ignore suggestions
+- Downloadable summary at end
+
+**Testing**: Interviewer joins → Conducts interview → Sees AI suggestions → Downloads summary
+
+---
+
+### **Module 12: Polish, Testing & Deployment** (Days 37-40)
+**Deliverable**: Production-ready application
+
+**Tasks**:
+- Error handling and edge cases
+- Loading states and user feedback
+- Security audit (input validation, rate limiting)
+- Performance optimization
+- Comprehensive testing (unit, integration, E2E)
+- Docker compose for production
+- Deploy to cloud (AWS/DigitalOcean)
+- SSL certificate setup
+- Monitoring and logging setup
+
+**Testing**: Full end-to-end flows in production environment
+
+---
+
+## Timeline Summary
+
+| Module | Days | Cumulative |
+|--------|------|------------|
+| 1 | 2 | 2 |
+| 2 | 2 | 4 |
+| 3 | 3 | 7 |
+| 4 | 3 | 10 |
+| 5 | 3 | 13 |
+| 6 | 3 | 16 |
+| 7 | 3 | 19 |
+| 8 | 3 | 22 |
+| 9 | 5 | 27 |
+| 10 | 4 | 31 |
+| 11 | 5 | 36 |
+| 12 | 4 | 40 |
+
+**Total: 40 working days (~8 weeks)**
+
+---
+
+## Cost Estimation (Monthly for Production)
+
+- **OpenAI API**: $200-500 (depending on usage)
+- **Pinecone**: $70 (Starter plan)
+- **SendGrid**: Free (up to 100 emails/day) or $15/month
+- **MongoDB Atlas**: Free (512MB) or $57/month (Shared cluster)
+- **Redis**: $5-10 (DigitalOcean/Upstash)
+- **Server Hosting**: $50-100 (4GB RAM VPS)
+- **Domain + SSL**: $15/year
+
+**Total: ~$350-750/month**
+
+---
+
+## Development Order for Functionality
+
+1. **Core Infrastructure** (Modules 1-2)
+2. **Admin Workflow** (Modules 3-4)
+3. **Candidate Entry** (Module 5)
+4. **Real-time Foundation** (Modules 6-8)
+5. **AI Interview** (Module 9)
+6. **Analysis** (Module 10)
+7. **AI-Assisted Mode** (Module 11)
+8. **Production Ready** (Module 12)
+
+---
+
+## Key Features Summary
+
+### Admin Panel
+✅ Schedule interviews with JD upload
+✅ Upload and parse resumes
+✅ Select interview type
+✅ View interview reports
+✅ Export reports
+
+### Candidate Portal
+✅ Enter Interview ID
+✅ Device compatibility checks
+✅ Live video interview
+✅ Real-time transcription
+✅ Intuitive UI
+
+### AI Features
+✅ Autonomous interview conduction
+✅ Context-aware questioning
+✅ Real-time AI assistance for human interviewers
+✅ Comprehensive performance analysis
+✅ Detailed recommendations
+
+---
+
+## Security Considerations
+
+- JWT token expiration and refresh
+- Input sanitization for file uploads
+- Rate limiting on API endpoints
+- HTTPS only in production
+- Secure WebSocket connections (WSS)
+- Environment variable protection
+- CORS configuration
+- Database query injection prevention
+
+---
+
+## Monitoring & Maintenance
+
+- Log all errors with error tracking (Sentry)
+- Monitor API usage and costs
+- Track interview completion rates
+- Gather user feedback
+- Regular security updates
+- Database backup strategy
+- Performance monitoring (response times)

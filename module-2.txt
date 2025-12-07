@@ -1,0 +1,669 @@
+## 📄 module-02-admin-auth.txt
+
+```
+MODULE 2: ADMIN AUTHENTICATION & DASHBOARD
+
+OBJECTIVE: Implement JWT authentication and admin dashboard with React Router
+
+DURATION: 2 days
+
+PREREQUISITES: Module 1 completed
+
+TECH STACK: React + TypeScript + Vite + React Router + Zustand
+
+TASKS:
+
+1. BACKEND - JWT AUTHENTICATION
+   
+   File: backend/app/core/security.py
+   ```python
+   from datetime import datetime, timedelta
+   from jose import JWTError, jwt
+   from passlib.context import CryptContext
+   import os
+   
+   SECRET_KEY = os.getenv("SECRET_KEY")
+   ALGORITHM = os.getenv("ALGORITHM", "HS256")
+   ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+   
+   pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+   
+   def verify_password(plain_password: str, hashed_password: str) -> bool:
+       return pwd_context.verify(plain_password, hashed_password)
+   
+   def get_password_hash(password: str) -> str:
+       return pwd_context.hash(password)
+   
+   def create_access_token(data: dict) -> str:
+       to_encode = data.copy()
+       expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+       to_encode.update({"exp": expire})
+       encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+       return encoded_jwt
+   
+   def decode_token(token: str):
+       try:
+           payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+           return payload
+       except JWTError:
+           return None
+   ```
+
+2. PYDANTIC MODELS
+   
+   File: backend/app/models/user.py
+   ```python
+   from pydantic import BaseModel, EmailStr
+   from typing import Optional
+   
+   class UserCreate(BaseModel):
+       email: EmailStr
+       password: str
+       full_name: str
+   
+   class UserLogin(BaseModel):
+       email: EmailStr
+       password: str
+   
+   class UserResponse(BaseModel):
+       id: str
+       email: str
+       full_name: str
+       role: str
+   
+   class Token(BaseModel):
+       access_token: str
+       token_type: str
+   ```
+
+3. AUTH API ENDPOINTS
+   
+   File: backend/app/api/auth.py
+   ```python
+   from fastapi import APIRouter, HTTPException, Depends
+   from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+   from ..models.user import UserCreate, UserLogin, Token, UserResponse
+   from ..core.database import users_collection
+   from ..core.security import (
+       get_password_hash,
+       verify_password,
+       create_access_token,
+       decode_token
+   )
+   from datetime import datetime
+   from bson import ObjectId
+   
+   router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+   security = HTTPBearer()
+   
+   @router.post("/register", response_model=UserResponse)
+   async def register(user: UserCreate):
+       existing = await users_collection.find_one({"email": user.email})
+       if existing:
+           raise HTTPException(status_code=400, detail="Email already registered")
+       
+       user_dict = {
+           "email": user.email,
+           "password_hash": get_password_hash(user.password),
+           "full_name": user.full_name,
+           "role": "admin",
+           "created_at": datetime.utcnow()
+       }
+       
+       result = await users_collection.insert_one(user_dict)
+       
+       return UserResponse(
+           id=str(result.inserted_id),
+           email=user.email,
+           full_name=user.full_name,
+           role="admin"
+       )
+   
+   @router.post("/login", response_model=Token)
+   async def login(credentials: UserLogin):
+       user = await users_collection.find_one({"email": credentials.email})
+       
+       if not user or not verify_password(credentials.password, user["password_hash"]):
+           raise HTTPException(status_code=401, detail="Invalid credentials")
+       
+       access_token = create_access_token(
+           data={"sub": user["email"], "id": str(user["_id"])}
+       )
+       
+       return Token(access_token=access_token, token_type="bearer")
+   
+   async def get_current_user(
+       credentials: HTTPAuthorizationCredentials = Depends(security)
+   ) -> UserResponse:
+       token = credentials.credentials
+       payload = decode_token(token)
+       
+       if payload is None:
+           raise HTTPException(status_code=401, detail="Invalid token")
+       
+       user = await users_collection.find_one({"email": payload.get("sub")})
+       if user is None:
+           raise HTTPException(status_code=401, detail="User not found")
+       
+       return UserResponse(
+           id=str(user["_id"]),
+           email=user["email"],
+           full_name=user["full_name"],
+           role=user["role"]
+       )
+   
+   @router.get("/me", response_model=UserResponse)
+   async def get_me(current_user: UserResponse = Depends(get_current_user)):
+       return current_user
+   ```
+   
+   Update backend/app/main.py:
+   ```python
+   from app.api import auth
+   app.include_router(auth.router)
+   ```
+
+4. FRONTEND - AXIOS SETUP
+   
+   File: admin-frontend/src/lib/axios.ts
+   ```typescript
+   import axios from 'axios';
+   
+   const api = axios.create({
+     baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+   });
+   
+   api.interceptors.request.use((config) => {
+     const token = localStorage.getItem('admin_token');
+     if (token) {
+       config.headers.Authorization = `Bearer ${token}`;
+     }
+     return config;
+   });
+   
+   api.interceptors.response.use(
+     (response) => response,
+     (error) => {
+       if (error.response?.status === 401) {
+         localStorage.removeItem('admin_token');
+         window.location.href = '/login';
+       }
+       return Promise.reject(error);
+     }
+   );
+   
+   export default api;
+   ```
+
+5. ZUSTAND AUTH STORE
+   
+   File: admin-frontend/src/store/authStore.ts
+   ```typescript
+   import { create } from 'zustand';
+   import api from '../lib/axios';
+   
+   interface User {
+     id: string;
+     email: string;
+     full_name: string;
+     role: string;
+   }
+   
+   interface AuthState {
+     user: User | null;
+     token: string | null;
+     isLoading: boolean;
+     login: (email: string, password: string) => Promise<void>;
+     register: (email: string, password: string, full_name: string) => Promise<void>;
+     logout: () => void;
+     checkAuth: () => Promise<void>;
+   }
+   
+   export const useAuthStore = create<AuthState>((set) => ({
+     user: null,
+     token: null,
+     isLoading: true,
+     
+     login: async (email, password) => {
+       const response = await api.post('/api/auth/login', { email, password });
+       const { access_token } = response.data;
+       localStorage.setItem('admin_token', access_token);
+       
+       const userResponse = await api.get('/api/auth/me');
+       set({ user: userResponse.data, token: access_token });
+     },
+     
+     register: async (email, password, full_name) => {
+       await api.post('/api/auth/register', { email, password, full_name });
+     },
+     
+     logout: () => {
+       localStorage.removeItem('admin_token');
+       set({ user: null, token: null });
+     },
+     
+     checkAuth: async () => {
+       const token = localStorage.getItem('admin_token');
+       if (!token) {
+         set({ isLoading: false });
+         return;
+       }
+       
+       try {
+         const response = await api.get('/api/auth/me');
+         set({ user: response.data, token, isLoading: false });
+       } catch (error) {
+         localStorage.removeItem('admin_token');
+         set({ user: null, token: null, isLoading: false });
+       }
+     },
+   }));
+   ```
+
+6. REACT ROUTER SETUP
+   
+   File: admin-frontend/src/App.tsx
+   ```typescript
+   import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+   import { useEffect } from 'react';
+   import { useAuthStore } from './store/authStore';
+   import LoginPage from './pages/LoginPage';
+   import RegisterPage from './pages/RegisterPage';
+   import DashboardPage from './pages/DashboardPage';
+   import ProtectedRoute from './components/ProtectedRoute';
+   
+   function App() {
+     const { checkAuth, isLoading } = useAuthStore();
+   
+     useEffect(() => {
+       checkAuth();
+     }, []);
+   
+     if (isLoading) {
+       return (
+         <div className="min-h-screen flex items-center justify-center">
+           <div className="text-xl">Loading...</div>
+         </div>
+       );
+     }
+   
+     return (
+       <BrowserRouter>
+         <Routes>
+           <Route path="/login" element={<LoginPage />} />
+           <Route path="/register" element={<RegisterPage />} />
+           <Route
+             path="/dashboard"
+             element={
+               <ProtectedRoute>
+                 <DashboardPage />
+               </ProtectedRoute>
+             }
+           />
+           <Route path="/" element={<Navigate to="/dashboard" replace />} />
+         </Routes>
+       </BrowserRouter>
+     );
+   }
+   
+   export default App;
+   ```
+
+7. PROTECTED ROUTE COMPONENT
+   
+   File: admin-frontend/src/components/ProtectedRoute.tsx
+   ```typescript
+   import { Navigate } from 'react-router-dom';
+   import { useAuthStore } from '../store/authStore';
+   
+   interface ProtectedRouteProps {
+     children: React.ReactNode;
+   }
+   
+   const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
+     const { user } = useAuthStore();
+   
+     if (!user) {
+       return <Navigate to="/login" replace />;
+     }
+   
+     return <>{children}</>;
+   };
+   
+   export default ProtectedRoute;
+   ```
+
+8. LOGIN PAGE
+   
+   File: admin-frontend/src/pages/LoginPage.tsx
+   ```typescript
+   import { useState } from 'react';
+   import { useNavigate, Link } from 'react-router-dom';
+   import { useAuthStore } from '../store/authStore';
+   
+   const LoginPage = () => {
+     const [email, setEmail] = useState('');
+     const [password, setPassword] = useState('');
+     const [error, setError] = useState('');
+     const [loading, setLoading] = useState(false);
+     const navigate = useNavigate();
+     const { login } = useAuthStore();
+   
+     const handleSubmit = async (e: React.FormEvent) => {
+       e.preventDefault();
+       setError('');
+       setLoading(true);
+   
+       try {
+         await login(email, password);
+         navigate('/dashboard');
+       } catch (err: any) {
+         setError(err.response?.data?.detail || 'Login failed');
+       } finally {
+         setLoading(false);
+       }
+     };
+   
+     return (
+       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+         <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
+           <div className="text-center mb-8">
+             <h1 className="text-3xl font-bold text-gray-900">Admin Login</h1>
+             <p className="text-gray-600 mt-2">AI Interview System</p>
+           </div>
+           
+           {error && (
+             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
+               {error}
+             </div>
+           )}
+           
+           <form onSubmit={handleSubmit} className="space-y-6">
+             <div>
+               <label className="block text-sm font-medium text-gray-700 mb-2">
+                 Email Address
+               </label>
+               <input
+                 type="email"
+                 value={email}
+                 onChange={(e) => setEmail(e.target.value)}
+                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                 placeholder="admin@example.com"
+                 required
+               />
+             </div>
+             
+             <div>
+               <label className="block text-sm font-medium text-gray-700 mb-2">
+                 Password
+               </label>
+               <input
+                 type="password"
+                 value={password}
+                 onChange={(e) => setPassword(e.target.value)}
+                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                 placeholder="••••••••"
+                 required
+               />
+             </div>
+             
+             <button
+               type="submit"
+               disabled={loading}
+               className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+             >
+               {loading ? 'Logging in...' : 'Login'}
+             </button>
+           </form>
+           
+           <p className="text-center mt-6 text-gray-600">
+             Don't have an account?{' '}
+             <Link to="/register" className="text-blue-600 hover:text-blue-700 font-medium">
+               Register
+             </Link>
+           </p>
+         </div>
+       </div>
+     );
+   };
+   
+   export default LoginPage;
+   ```
+
+9. REGISTER PAGE
+   
+   File: admin-frontend/src/pages/RegisterPage.tsx
+   ```typescript
+   import { useState } from 'react';
+   import { useNavigate, Link } from 'react-router-dom';
+   import { useAuthStore } from '../store/authStore';
+   
+   const RegisterPage = () => {
+     const [email, setEmail] = useState('');
+     const [password, setPassword] = useState('');
+     const [fullName, setFullName] = useState('');
+     const [error, setError] = useState('');
+     const [loading, setLoading] = useState(false);
+     const navigate = useNavigate();
+     const { register } = useAuthStore();
+   
+     const handleSubmit = async (e: React.FormEvent) => {
+       e.preventDefault();
+       setError('');
+       setLoading(true);
+   
+       try {
+         await register(email, password, fullName);
+         navigate('/login');
+       } catch (err: any) {
+         setError(err.response?.data?.detail || 'Registration failed');
+       } finally {
+         setLoading(false);
+       }
+     };
+   
+     return (
+       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+         <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8">
+           <div className="text-center mb-8">
+             <h1 className="text-3xl font-bold text-gray-900">Create Account</h1>
+             <p className="text-gray-600 mt-2">Register as an admin</p>
+           </div>
+           
+           {error && (
+             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
+               {error}
+             </div>
+           )}
+           
+           <form onSubmit={handleSubmit} className="space-y-6">
+             <div>
+               <label className="block text-sm font-medium text-gray-700 mb-2">
+                 Full Name
+               </label>
+               <input
+                 type="text"
+                 value={fullName}
+                 onChange={(e) => setFullName(e.target.value)}
+                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                 required
+               />
+             </div>
+             
+             <div>
+               <label className="block text-sm font-medium text-gray-700 mb-2">
+                 Email Address
+               </label>
+            <div>
+           <label className="block text-sm font-medium text-gray-700 mb-2">
+             Password
+           </label>
+           <input
+             type="password"
+             value={password}
+             onChange={(e) => setPassword(e.target.value)}
+             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+             required
+             minLength={6}
+           />
+         </div>
+         
+         <button
+           type="submit"
+           disabled={loading}
+           className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:opacity-50"
+         >
+           {loading ? 'Registering...' : 'Register'}
+         </button>
+       </form>
+       
+       <p className="text-center mt-6 text-gray-600">
+         Already have an account?{' '}
+         <Link to="/login" className="text-blue-600 hover:text-blue-700 font-medium">
+           Login
+         </Link>
+       </p>
+     </div>
+   </div>
+ );
+
+ 10. DASHBOARD PAGE
+    
+    File: admin-frontend/src/pages/DashboardPage.tsx
+```typescript
+    import { useNavigate } from 'react-router-dom';
+    import { useAuthStore } from '../store/authStore';
+    
+    const DashboardPage = () => {
+      const { user, logout } = useAuthStore();
+      const navigate = useNavigate();
+    
+      const handleLogout = () => {
+        logout();
+        navigate('/login');
+      };
+    
+      return (
+        <div className="min-h-screen bg-gray-50">
+          <nav className="bg-white shadow-sm border-b">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between items-center h-16">
+                <div className="flex items-center">
+                  <h1 className="text-xl font-bold text-gray-900">
+                    AI Interview System
+                  </h1>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="text-gray-700">{user?.full_name}</span>
+                  <button
+                    onClick={handleLogout}
+                    className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition"
+                  >
+                    Logout
+                  </button>
+                </div>
+              </div>
+            </div>
+          </nav>
+          
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="mb-8">
+              <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
+              <p className="text-gray-600 mt-1">Welcome back, {user?.full_name}!</p>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <h3 className="text-sm font-medium text-gray-600 mb-2">
+                  Total Interviews
+                </h3>
+                <p className="text-3xl font-bold text-blue-600">0</p>
+              </div>
+              
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <h3 className="text-sm font-medium text-gray-600 mb-2">
+                  Scheduled
+                </h3>
+                <p className="text-3xl font-bold text-green-600">0</p>
+              </div>
+              
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <h3 className="text-sm font-medium text-gray-600 mb-2">
+                  Completed
+                </h3>
+                <p className="text-3xl font-bold text-purple-600">0</p>
+              </div>
+            </div>
+            
+            <div className="bg-white rounded-lg shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                Quick Actions
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition">
+                  <p className="font-medium text-gray-900">Upload Resume</p>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Add a new candidate
+                  </p>
+                </button>
+                <button className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition">
+                  <p className="font-medium text-gray-900">Schedule Interview</p>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Create new interview
+                  </p>
+                </button>
+              </div>
+            </div>
+          </main>
+        </div>
+      );
+    };
+    
+    export default DashboardPage;
+```
+
+11. UPDATE VITE CONFIG
+    
+    File: admin-frontend/vite.config.ts
+```typescript
+    import { defineConfig } from 'vite'
+    import react from '@vitejs/plugin-react'
+    
+    export default defineConfig({
+      plugins: [react()],
+      server: {
+        port: 3000,
+        host: true
+      }
+    })
+```
+
+TESTING CHECKLIST:
+□ Backend auth endpoints working (test with Postman/Thunder Client)
+□ Can register new admin user
+□ Can login with correct credentials
+□ Invalid credentials show error
+□ Token stored in localStorage as 'admin_token'
+□ Protected routes redirect to /login when not authenticated
+□ Dashboard shows after successful login
+□ Logout clears token and redirects to login
+□ Token automatically added to API requests
+
+RUN & TEST:
+1. Start backend: cd backend && uvicorn app.main:app --reload
+2. Start admin frontend: cd admin-frontend && npm run dev
+3. Go to http://localhost:3000
+4. Register new account
+5. Login with credentials
+6. Should see dashboard
+7. Logout and verify redirect
+
+DELIVERABLES:
+✓ JWT authentication implemented
+✓ Login/register pages functional
+✓ Protected routes working
+✓ Dashboard layout created
+✓ User session management with Zustand
+✓ Axios interceptors for auth headers
+
+NEXT MODULE: Module 3 - Resume Upload & Parsing

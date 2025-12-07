@@ -1,0 +1,466 @@
+## 📄 module-01-monorepo-setup.txt
+
+```
+MODULE 1: MONOREPO SETUP & DATABASE SCHEMA
+
+OBJECTIVE: Set up complete monorepo with all four modules and MongoDB database
+
+DURATION: 2 days
+
+MONOREPO STRUCTURE:
+agentic-ai-interview/
+├── admin-frontend/          (React + TypeScript + Vite)
+├── candidate-frontend/      (React + TypeScript + Vite)
+├── interview-analysis/      (Python analysis module)
+├── backend/                 (FastAPI)
+├── docker-compose.yml
+├── .env.example
+└── README.md
+
+TASKS:
+
+1. INITIALIZE MONOREPO
+   Create root directory:
+   ```bash
+   mkdir agentic-ai-interview
+   cd agentic-ai-interview
+   ```
+
+2. ADMIN FRONTEND SETUP
+   ```bash
+   npm create vite@latest admin-frontend -- --template react-ts
+   cd admin-frontend
+   npm install
+   npm install -D tailwindcss postcss autoprefixer
+   npx tailwindcss init -p
+   npm install axios socket.io-client zustand react-router-dom
+   ```
+   
+   Configure tailwind.config.js:
+   ```javascript
+   export default {
+     content: [
+       "./index.html",
+       "./src/**/*.{js,ts,jsx,tsx}",
+     ],
+     theme: {
+       extend: {},
+     },
+     plugins: [],
+   }
+   ```
+   
+   Update src/index.css:
+   ```css
+   @tailwind base;
+   @tailwind components;
+   @tailwind utilities;
+   ```
+
+3. CANDIDATE FRONTEND SETUP
+   ```bash
+   cd ..
+   npm create vite@latest candidate-frontend -- --template react-ts
+   cd candidate-frontend
+   npm install
+   npm install -D tailwindcss postcss autoprefixer
+   npx tailwindcss init -p
+   npm install axios socket.io-client zustand react-router-dom
+   ```
+   
+   Same Tailwind configuration as admin-frontend
+
+4. BACKEND SETUP
+   ```bash
+   cd ..
+   mkdir backend
+   cd backend
+   python -m venv venv
+   source venv/bin/activate  # Windows: venv\Scripts\activate
+   pip install fastapi uvicorn pymongo motor python-dotenv pydantic python-jose[cryptography] passlib[bcrypt] python-multipart
+   ```
+   
+   Create requirements.txt:
+   ```
+   fastapi==0.104.1
+   uvicorn[standard]==0.24.0
+   pymongo==4.6.0
+   motor==3.3.2
+   python-dotenv==1.0.0
+   pydantic==2.5.0
+   python-jose[cryptography]==3.3.0
+   passlib[bcrypt]==1.7.4
+   python-multipart==0.0.6
+   python-socketio==5.10.0
+   PyMuPDF==1.23.8
+   openai==1.3.7
+   aiofiles==23.2.1
+   celery==5.3.4
+   redis==5.0.1
+   ```
+
+5. INTERVIEW ANALYSIS MODULE SETUP
+   ```bash
+   cd ..
+   mkdir interview-analysis
+   cd interview-analysis
+   mkdir -p src/{analyzers,models,utils}
+   touch src/__init__.py
+   touch src/analyzers/{__init__.py,performance_analyzer.py,qa_extractor.py,report_generator.py}
+   touch src/models/{__init__.py,report_schema.py}
+   touch src/utils/{__init__.py,scoring.py,evaluation.py}
+   ```
+   
+   Create requirements.txt:
+   ```
+   openai==1.3.7
+   pymongo==4.6.0
+   motor==3.3.2
+   python-dotenv==1.0.0
+   pydantic==2.5.0
+   ```
+
+6. BACKEND FOLDER STRUCTURE
+   ```bash
+   cd ../backend
+   mkdir -p app/{api,core,models,services,sockets,utils}
+   touch app/__init__.py
+   touch app/api/{__init__.py,auth.py,candidates.py,interviews.py,reports.py}
+   touch app/core/{__init__.py,config.py,database.py,security.py}
+   touch app/models/{__init__.py,user.py,candidate.py,interview.py,transcript.py,report.py}
+   touch app/services/{__init__.py,resume_parser.py,email_service.py,ai_interviewer.py,transcription.py,tts_service.py}
+   touch app/sockets/{__init__.py,websocket.py,events.py}
+   touch app/utils/{__init__.py,helpers.py}
+   touch app/main.py
+   ```
+
+7. MONGODB SCHEMA
+   Database: ai_interview_system
+   
+   Collections:
+   
+   a) users (Admin users)
+   {
+     "_id": ObjectId,
+     "email": String (unique, indexed),
+     "password_hash": String,
+     "full_name": String,
+     "role": String (default: "admin"),
+     "created_at": DateTime
+   }
+   
+   b) candidates
+   {
+     "_id": ObjectId,
+     "name": String,
+     "email": String,
+     "phone": String,
+     "resume_url": String,
+     "skills": Array[String],
+     "experience": String,
+     "education": String,
+     "projects": Array[{
+       "title": String,
+       "description": String,
+       "technologies": Array[String]
+     }],
+     "achievements": Array[String],
+     "summary": String,
+     "parsed_data": Object,
+     "created_at": DateTime,
+     "created_by": ObjectId (ref: users)
+   }
+   
+   c) interviews
+   {
+     "_id": ObjectId,
+     "interview_id": String (unique, 8-char, indexed),
+     "candidate_id": ObjectId (ref: candidates),
+     "admin_id": ObjectId (ref: users),
+     "job_description": String,
+     "interview_type": String (enum: "ai_based", "ai_assisted"),
+     "status": String (enum: "scheduled", "in_progress", "completed", "expired"),
+     "scheduled_at": DateTime,
+     "expiry_date": DateTime,
+     "started_at": DateTime,
+     "ended_at": DateTime,
+     "created_at": DateTime
+   }
+   
+   d) transcripts
+   {
+     "_id": ObjectId,
+     "interview_id": String (ref: interviews.interview_id),
+     "speaker": String (enum: "ai", "candidate", "interviewer"),
+     "text": String,
+     "timestamp": DateTime,
+     "audio_url": String (optional),
+     "sequence": Number
+   }
+   
+   e) reports
+   {
+     "_id": ObjectId,
+     "interview_id": String (ref: interviews.interview_id),
+     "qa_mapping": Array[{
+       "question": String,
+       "answer": String,
+       "evaluation": String,
+       "score": Number
+     }],
+     "performance_score": Number (0-100),
+     "strengths": Array[String],
+     "weaknesses": Array[String],
+     "technical_assessment": {
+       "coding_skills": Number,
+       "problem_solving": Number,
+       "communication": Number,
+       "technical_knowledge": Number
+     },
+     "recommendation": String (enum: "hire", "reject", "maybe"),
+     "detailed_analysis": String,
+     "generated_at": DateTime
+   }
+
+8. ROOT .ENV FILE
+   Create .env in root:
+   ```
+   # Database
+   MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/
+   DATABASE_NAME=ai_interview_system
+   
+   # Auth
+   SECRET_KEY=your-secret-key-minimum-32-characters-long
+   ALGORITHM=HS256
+   ACCESS_TOKEN_EXPIRE_MINUTES=30
+   
+   # OpenAI
+   OPENAI_API_KEY=sk-...
+   
+   # Email Service
+   SENDGRID_API_KEY=SG...
+   # OR
+   RESEND_API_KEY=re_...
+   FROM_EMAIL=noreply@yourdomain.com
+   
+   # Storage
+   UPLOAD_DIR=./uploads/resumes
+   
+   # Redis
+   REDIS_URL=redis://localhost:6379
+   
+   # URLs
+   ADMIN_FRONTEND_URL=http://localhost:3000
+   CANDIDATE_FRONTEND_URL=http://localhost:3001
+   BACKEND_URL=http://localhost:8000
+   ```
+
+9. DATABASE CONNECTION
+   File: backend/app/core/database.py
+   ```python
+   from motor.motor_asyncio import AsyncIOMotorClient
+   import os
+   from dotenv import load_dotenv
+   
+   load_dotenv()
+   
+   MONGODB_URL = os.getenv("MONGODB_URL")
+   DATABASE_NAME = os.getenv("DATABASE_NAME")
+   
+   # Async client for FastAPI
+   client = AsyncIOMotorClient(MONGODB_URL)
+   database = client[DATABASE_NAME]
+   
+   # Collections
+   users_collection = database.get_collection("users")
+   candidates_collection = database.get_collection("candidates")
+   interviews_collection = database.get_collection("interviews")
+   transcripts_collection = database.get_collection("transcripts")
+   reports_collection = database.get_collection("reports")
+   
+   # Create indexes
+   async def create_indexes():
+       await users_collection.create_index("email", unique=True)
+       await interviews_collection.create_index("interview_id", unique=True)
+       await transcripts_collection.create_index([("interview_id", 1), ("sequence", 1)])
+   ```
+
+10. BASIC FASTAPI APP
+    File: backend/app/main.py
+    ```python
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+    from dotenv import load_dotenv
+    from .core.database import create_indexes
+    import os
+    
+    load_dotenv()
+    
+    app = FastAPI(
+        title="AI Interview System API",
+        description="Backend API for AI-powered interview platform",
+        version="1.0.0"
+    )
+    
+    # CORS configuration
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            os.getenv("ADMIN_FRONTEND_URL", "http://localhost:3000"),
+            os.getenv("CANDIDATE_FRONTEND_URL", "http://localhost:3001")
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
+    @app.on_event("startup")
+    async def startup_event():
+        await create_indexes()
+    
+    @app.get("/")
+    async def root():
+        return {
+            "message": "AI Interview System API",
+            "version": "1.0.0",
+            "status": "running"
+        }
+    
+    @app.get("/health")
+    async def health_check():
+        return {"status": "healthy"}
+    ```
+
+11. DOCKER COMPOSE
+    File: docker-compose.yml (root)
+    ```yaml
+    version: '3.8'
+    
+    services:
+      backend:
+        build: ./backend
+        ports:
+          - "8000:8000"
+        env_file:
+          - .env
+        volumes:
+          - ./backend:/app
+          - ./uploads:/app/uploads
+        depends_on:
+          - redis
+        command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      
+      admin-frontend:
+        build:
+          context: ./admin-frontend
+          dockerfile: Dockerfile
+        ports:
+          - "3000:3000"
+        volumes:
+          - ./admin-frontend:/app
+          - /app/node_modules
+        environment:
+          - VITE_API_URL=http://localhost:8000
+      
+      candidate-frontend:
+        build:
+          context: ./candidate-frontend
+          dockerfile: Dockerfile
+        ports:
+          - "3001:3000"
+        volumes:
+          - ./candidate-frontend:/app
+          - /app/node_modules
+        environment:
+          - VITE_API_URL=http://localhost:8000
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+    ```
+
+12. FRONTEND DOCKERFILES
+    File: admin-frontend/Dockerfile
+    ```dockerfile
+    FROM node:18-alpine
+    WORKDIR /app
+    COPY package*.json ./
+    RUN npm install
+    COPY . .
+    EXPOSE 3000
+    CMD ["npm", "run", "dev", "--", "--host"]
+    ```
+    
+    Same for candidate-frontend/Dockerfile
+
+13. BACKEND DOCKERFILE
+    File: backend/Dockerfile
+    ```dockerfile
+    FROM python:3.11-slim
+    WORKDIR /app
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    COPY . .
+    EXPOSE 8000
+    CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ```
+
+14. ROOT .GITIGNORE
+    ```
+    # Dependencies
+    node_modules/
+    venv/
+    __pycache__/
+    
+    # Environment
+    .env
+    .env.local
+    
+    # Build outputs
+    dist/
+    build/
+    
+    # Uploads
+    uploads/
+    
+    # IDE
+    .vscode/
+    .idea/
+    
+    # OS
+    .DS_Store
+    Thumbs.db
+    ```
+
+TESTING CHECKLIST:
+□ All four modules created with correct structure
+□ MongoDB connection established
+□ FastAPI runs on http://localhost:8000
+□ Admin frontend runs on http://localhost:3000
+□ Candidate frontend runs on http://localhost:3001
+□ Health check endpoint returns success
+□ Environment variables loaded correctly
+□ Docker compose builds all services
+
+RUN COMMANDS:
+Backend:
+cd backend && source venv/bin/activate && uvicorn app.main:app --reload
+
+Admin Frontend:
+cd admin-frontend && npm run dev
+
+Candidate Frontend:
+cd candidate-frontend && npm run dev -- --port 3001
+
+All with Docker:
+docker-compose up --build
+
+DELIVERABLES:
+✓ Complete monorepo structure created
+✓ MongoDB collections defined with indexes
+✓ Database connection working
+✓ All services running
+✓ Docker configuration ready
+
+NEXT MODULE: Module 2 - Admin Authentication & Dashboard
