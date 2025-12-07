@@ -1,0 +1,642 @@
+MODULE 3: RESUME UPLOAD & PARSING
+
+OBJECTIVE: Upload PDF resumes and extract candidate information using AI
+
+DURATION: 3 days
+
+PREREQUISITES: Module 2 completed
+
+REQUIRED API KEYS: OpenAI API Key
+
+TASKS:
+
+1. BACKEND - RESUME PARSING SERVICE
+   
+   File: backend/app/services/resume_parser.py
+```python
+   import fitz  # PyMuPDF
+   from openai import OpenAI
+   import os
+   import json
+   from typing import Dict, Any
+   
+   client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+   
+   def extract_text_from_pdf(pdf_path: str) -> str:
+       """Extract text content from PDF file"""
+       try:
+           doc = fitz.open(pdf_path)
+           text = ""
+           for page in doc:
+               text += page.get_text()
+           doc.close()
+           return text.strip()
+       except Exception as e:
+           raise Exception(f"Failed to extract text from PDF: {str(e)}")
+   
+   async def parse_resume_with_ai(resume_text: str) -> Dict[str, Any]:
+       """Use GPT-4 to extract structured information from resume text"""
+       
+       prompt = f"""
+       Extract the following information from this resume and return ONLY a valid JSON object:
+       
+       {{
+         "name": "Full name of candidate",
+         "email": "Email address",
+         "phone": "Phone number",
+         "skills": ["Array of technical skills"],
+         "experience": "Total years or summary of experience",
+         "education": "Highest degree and institution",
+         "projects": [
+           {{
+             "title": "Project name",
+             "description": "Brief description",
+             "technologies": ["Tech stack used"]
+           }}
+         ],
+         "achievements": ["Certifications, awards, notable achievements"],
+         "summary": "Professional summary in 2-3 sentences"
+       }}
+       
+       If any field is not found, use empty string or empty array.
+       
+       Resume text:
+       {resume_text}
+       
+       Return ONLY the JSON object, no markdown formatting or additional text.
+       """
+       
+       try:
+           response = client.chat.completions.create(
+               model="gpt-4o",
+               messages=[
+                   {
+                       "role": "system",
+                       "content": "You are a resume parser. Extract information accurately and return only valid JSON."
+                   },
+                   {"role": "user", "content": prompt}
+               ],
+               temperature=0.3,
+               max_tokens=2000
+           )
+           
+           result_text = response.choices[0].message.content.strip()
+           
+           # Clean markdown code blocks if present
+           if result_text.startswith("```json"):
+               result_text = result_text[7:]
+           elif result_text.startswith("```"):
+               result_text = result_text[3:]
+           if result_text.endswith("```"):
+               result_text = result_text[:-3]
+           
+           parsed_data = json.loads(result_text.strip())
+           return parsed_data
+           
+       except json.JSONDecodeError as e:
+           raise Exception(f"Failed to parse AI response as JSON: {str(e)}")
+       except Exception as e:
+           raise Exception(f"AI parsing failed: {str(e)}")
+```
+
+2. CANDIDATES API ENDPOINTS
+   
+   File: backend/app/api/candidates.py
+```python
+   from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+   from ..models.user import UserResponse
+   from ..api.auth import get_current_user
+   from ..core.database import candidates_collection
+   from ..services.resume_parser import extract_text_from_pdf, parse_resume_with_ai
+   from datetime import datetime
+   from bson import ObjectId
+   import os
+   import shutil
+   
+   router = APIRouter(prefix="/api/candidates", tags=["Candidates"])
+   
+   UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads/resumes")
+   os.makedirs(UPLOAD_DIR, exist_ok=True)
+   
+   @router.post("/upload-resume")
+   async def upload_resume(
+       file: UploadFile = File(...),
+       current_user: UserResponse = Depends(get_current_user)
+   ):
+       # Validate file type
+       if not file.filename.lower().endswith('.pdf'):
+           raise HTTPException(
+               status_code=400,
+               detail="Only PDF files are allowed"
+           )
+       
+       # Generate unique filename
+       timestamp = int(datetime.utcnow().timestamp())
+       filename = f"{timestamp}_{file.filename}"
+       file_path = os.path.join(UPLOAD_DIR, filename)
+       
+       # Save file
+       try:
+           with open(file_path, "wb") as buffer:
+               shutil.copyfileobj(file.file, buffer)
+       except Exception as e:
+           raise HTTPException(
+               status_code=500,
+               detail=f"Failed to save file: {str(e)}"
+           )
+       
+       try:
+           # Extract text from PDF
+           resume_text = extract_text_from_pdf(file_path)
+           
+           if not resume_text:
+               os.remove(file_path)
+               raise HTTPException(
+                   status_code=400,
+                   detail="Could not extract text from PDF"
+               )
+           
+           # Parse with AI
+           parsed_data = await parse_resume_with_ai(resume_text)
+           
+           # Create candidate record
+           candidate_dict = {
+               "name": parsed_data.get("name", "Unknown"),
+               "email": parsed_data.get("email", ""),
+               "phone": parsed_data.get("phone", ""),
+               "resume_url": file_path,
+               "resume_filename": file.filename,
+               "skills": parsed_data.get("skills", []),
+               "experience": parsed_data.get("experience", ""),
+               "education": parsed_data.get("education", ""),
+               "projects": parsed_data.get("projects", []),
+               "achievements": parsed_data.get("achievements", []),
+               "summary": parsed_data.get("summary", ""),
+               "parsed_data": parsed_data,
+               "created_at": datetime.utcnow(),
+               "created_by": current_user.id
+           }
+           
+           result = await candidates_collection.insert_one(candidate_dict)
+           candidate_dict["_id"] = str(result.inserted_id)
+           
+           return {
+               "message": "Resume uploaded and parsed successfully",
+               "candidate_id": str(result.inserted_id),
+               "candidate": {
+                   "id": str(result.inserted_id),
+                   "name": candidate_dict["name"],
+                   "email": candidate_dict["email"],
+                   "phone": candidate_dict["phone"],
+                   "skills": candidate_dict["skills"],
+                   "experience": candidate_dict["experience"],
+                   "education": candidate_dict["education"],
+                   "projects": candidate_dict["projects"],
+                   "achievements": candidate_dict["achievements"],
+                   "summary": candidate_dict["summary"]
+               }
+           }
+           
+       except HTTPException:
+           raise
+       except Exception as e:
+           # Clean up file if parsing fails
+           if os.path.exists(file_path):
+               os.remove(file_path)
+           raise HTTPException(
+               status_code=500,
+               detail=f"Failed to parse resume: {str(e)}"
+           )
+   
+   @router.get("/")
+   async def get_candidates(
+       current_user: UserResponse = Depends(get_current_user)
+   ):
+       candidates = []
+       async for candidate in candidates_collection.find().sort("created_at", -1):
+           candidates.append({
+               "id": str(candidate["_id"]),
+               "name": candidate.get("name"),
+               "email": candidate.get("email"),
+               "phone": candidate.get("phone"),
+               "skills": candidate.get("skills", []),
+               "experience": candidate.get("experience"),
+               "education": candidate.get("education"),
+               "summary": candidate.get("summary"),
+               "created_at": candidate.get("created_at")
+           })
+       return candidates
+   
+   @router.get("/{candidate_id}")
+   async def get_candidate(
+       candidate_id: str,
+       current_user: UserResponse = Depends(get_current_user)
+   ):
+       try:
+           candidate = await candidates_collection.find_one(
+               {"_id": ObjectId(candidate_id)}
+           )
+       except:
+           raise HTTPException(status_code=400, detail="Invalid candidate ID")
+       
+       if not candidate:
+           raise HTTPException(status_code=404, detail="Candidate not found")
+       
+       return {
+           "id": str(candidate["_id"]),
+           "name": candidate.get("name"),
+           "email": candidate.get("email"),
+           "phone": candidate.get("phone"),
+           "skills": candidate.get("skills", []),
+           "experience": candidate.get("experience"),
+           "education": candidate.get("education"),
+           "projects": candidate.get("projects", []),
+           "achievements": candidate.get("achievements", []),
+           "summary": candidate.get("summary"),
+           "created_at": candidate.get("created_at")
+       }
+   
+   @router.delete("/{candidate_id}")
+   async def delete_candidate(
+       candidate_id: str,
+       current_user: UserResponse = Depends(get_current_user)
+   ):
+       try:
+           candidate = await candidates_collection.find_one(
+               {"_id": ObjectId(candidate_id)}
+           )
+           
+           if not candidate:
+               raise HTTPException(status_code=404, detail="Candidate not found")
+           
+           # Delete resume file
+           if candidate.get("resume_url") and os.path.exists(candidate["resume_url"]):
+               os.remove(candidate["resume_url"])
+           
+           # Delete from database
+           await candidates_collection.delete_one({"_id": ObjectId(candidate_id)})
+           
+           return {"message": "Candidate deleted successfully"}
+       except HTTPException:
+           raise
+       except Exception as e:
+           raise HTTPException(status_code=500, detail=str(e))
+```
+   
+   Update backend/app/main.py:
+```python
+   from app.api import candidates
+   app.include_router(candidates.router)
+```
+
+3. FRONTEND - UPLOAD RESUME PAGE
+   
+   File: admin-frontend/src/pages/UploadResumePage.tsx
+```typescript
+   import { useState } from 'react';
+   import { useNavigate } from 'react-router-dom';
+   import api from '../lib/axios';
+   
+   interface CandidateData {
+     id: string;
+     name: string;
+     email: string;
+     phone: string;
+     skills: string[];
+     experience: string;
+     education: string;
+     projects: Array<{
+       title: string;
+       description: string;
+       technologies: string[];
+     }>;
+     achievements: string[];
+     summary: string;
+   }
+   
+   const UploadResumePage = () => {
+     const [file, setFile] = useState<File | null>(null);
+     const [uploading, setUploading] = useState(false);
+     const [error, setError] = useState('');
+     const [candidate, setCandidate] = useState<CandidateData | null>(null);
+     const navigate = useNavigate();
+   
+     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+       const selectedFile = e.target.files?.[0];
+       if (selectedFile) {
+         if (!selectedFile.name.toLowerCase().endsWith('.pdf')) {
+           setError('Please select a PDF file');
+           return;
+         }
+         setFile(selectedFile);
+         setError('');
+         setCandidate(null);
+       }
+     };
+   
+     const handleUpload = async () => {
+       if (!file) {
+         setError('Please select a file');
+         return;
+       }
+   
+       setUploading(true);
+       setError('');
+   
+       const formData = new FormData();
+       formData.append('file', file);
+   
+       try {
+         const response = await api.post('/api/candidates/upload-resume', formData, {
+           headers: { 'Content-Type': 'multipart/form-data' }
+         });
+         
+         setCandidate(response.data.candidate);
+       } catch (err: any) {
+         setError(err.response?.data?.detail || 'Failed to upload resume');
+       } finally {
+         setUploading(false);
+       }
+     };
+   
+     const handleReset = () => {
+       setFile(null);
+       setCandidate(null);
+       setError('');
+     };
+   
+     return (
+       <div className="min-h-screen bg-gray-50">
+         <nav className="bg-white shadow-sm border-b">
+           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+             <div className="flex items-center h-16">
+               <button
+                 onClick={() => navigate('/dashboard')}
+                 className="text-blue-600 hover:text-blue-800 font-medium"
+               >
+                 ← Back to Dashboard
+               </button>
+             </div>
+           </div>
+         </nav>
+   
+         <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+           <div className="mb-8">
+             <h1 className="text-3xl font-bold text-gray-900">Upload Resume</h1>
+             <p className="text-gray-600 mt-2">
+               Upload a candidate's resume in PDF format for AI-powered parsing
+             </p>
+           </div>
+   
+           {!candidate ? (
+             <div className="bg-white rounded-lg shadow-sm border p-8">
+               {error && (
+                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
+                   {error}
+                 </div>
+               )}
+   
+               <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center">
+                 <input
+                   type="file"
+                   id="resume-upload"
+                   accept=".pdf"
+                   onChange={handleFileChange}
+                   className="hidden"
+                 />
+                 <label
+                   htmlFor="resume-upload"
+                   className="cursor-pointer"
+                 >
+                   <div className="mb-4">
+                     <svg
+                       className="mx-auto h-12 w-12 text-gray-400"
+                       stroke="currentColor"
+                       fill="none"
+                       viewBox="0 0 48 48"
+                     >
+                       <path
+                         d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
+                         strokeWidth={2}
+                         strokeLinecap="round"
+                         strokeLinejoin="round"
+                       />
+                     </svg>
+                   </div>
+                   <p className="text-lg font-medium text-gray-900">
+                     Click to upload or drag and drop
+                   </p>
+                   <p className="text-sm text-gray-500 mt-1">
+                     PDF files only (Max 10MB)
+                   </p>
+                 </label>
+               </div>
+   
+               {file && (
+                 <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                   <p className="text-sm font-medium text-gray-900">Selected file:</p>
+                   <p className="text-sm text-gray-600 mt-1">{file.name}</p>
+                 </div>
+               )}
+   
+               <button
+                 onClick={handleUpload}
+                 disabled={!file || uploading}
+                 className="mt-6 w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+               >
+                 {uploading ? 'Parsing Resume...' : 'Upload and Parse'}
+               </button>
+             </div>
+           ) : (
+             <div className="space-y-6">
+               <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg">
+                 ✓ Resume parsed successfully!
+               </div>
+   
+               <div className="bg-white rounded-lg shadow-sm border p-6">
+                 <h2 className="text-xl font-bold text-gray-900 mb-4">
+                   Candidate Profile
+                 </h2>
+   
+                 <div className="space-y-4">
+                   <div>
+                     <label className="block text-sm font-medium text-gray-700 mb-1">
+                       Name
+                     </label>
+                     <p className="text-lg font-semibold text-gray-900">
+                       {candidate.name}
+                     </p>
+                   </div>
+   
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     <div>
+                       <label className="block text-sm font-medium text-gray-700 mb-1">
+                         Email
+                       </label>
+                       <p className="text-gray-900">{candidate.email || 'N/A'}</p>
+                     </div>
+                     <div>
+                       <label className="block text-sm font-medium text-gray-700 mb-1">
+                         Phone
+                       </label>
+                       <p className="text-gray-900">{candidate.phone || 'N/A'}</p>
+                     </div>
+                   </div>
+   
+                   <div>
+                     <label className="block text-sm font-medium text-gray-700 mb-1">
+                       Experience
+                     </label>
+                     <p className="text-gray-900">{candidate.experience || 'N/A'}</p>
+                   </div>
+   
+                   <div>
+                     <label className="block text-sm font-medium text-gray-700 mb-1">
+                       Education
+                     </label>
+                     <p className="text-gray-900">{candidate.education || 'N/A'}</p>
+                   </div>
+   
+                   <div>
+                     <label className="block text-sm font-medium text-gray-700 mb-2">
+                       Skills
+                     </label>
+                     <div className="flex flex-wrap gap-2">
+                       {candidate.skills.length > 0 ? (
+                         candidate.skills.map((skill, idx) => (
+                           <span
+                             key={idx}
+                             className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
+                           >
+                             {skill}
+                           </span>
+                         ))
+                       ) : (
+                         <p className="text-gray-500">No skills found</p>
+                       )}
+                     </div>
+                   </div>
+   
+                   {candidate.projects.length > 0 && (
+                     <div>
+                       <label className="block text-sm font-medium text-gray-700 mb-2">
+                         Projects
+                       </label>
+                       <div className="space-y-3">
+                         {candidate.projects.map((project, idx) => (
+                           <div key={idx} className="border-l-4 border-blue-500 pl-4">
+                             <h4 className="font-semibold text-gray-900">
+                               {project.title}
+                             </h4>
+                             <p className="text-sm text-gray-600 mt-1">
+                               {project.description}
+                             </p>
+                             {project.technologies.length > 0 && (
+                               <div className="flex flex-wrap gap-1 mt-2">
+                                 {project.technologies.map((tech, tidx) => (
+                                   <span
+                                     key={tidx}
+                                     className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-xs"
+                                   >
+                                     {tech}
+                                   </span>
+                                 ))}
+                               </div>
+                             )}
+                           </div>
+                         ))}
+                       </div>
+                     </div>
+                   )}
+   
+                   {candidate.achievements.length > 0 && (
+                     <div>
+                       <label className="block text-sm font-medium text-gray-700 mb-2">
+                         Achievements
+                       </label>
+                       <ul className="list-disc list-inside space-y-1">
+                         {candidate.achievements.map((achievement, idx) => (
+                           <li key={idx} className="text-gray-900">
+                             {achievement}
+                           </li>
+                         ))}
+                       </ul>
+                     </div>
+                   )}
+   
+                   {candidate.summary && (
+                     <div>
+                       <label className="block text-sm font-medium text-gray-700 mb-1">
+                         Summary
+                       </label>
+                       <p className="text-gray-900">{candidate.summary}</p>
+                     </div>
+                   )}
+                 </div>
+               </div>
+   
+               <div className="flex gap-4">
+                 <button
+                   onClick={handleReset}
+                   className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
+                 >
+                   Upload Another
+                 </button>
+                 <button
+                   onClick={() => navigate('/dashboard')}
+                   className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+                 >
+                   Go to Dashboard
+                 </button>
+               </div>
+             </div>
+           )}
+         </main>
+       </div>
+     );
+   };
+   
+   export default UploadResumePage;
+```
+
+4. UPDATE APP ROUTING
+   
+   File: admin-frontend/src/App.tsx (add route)
+```typescript
+   import UploadResumePage from './pages/UploadResumePage';
+   
+   // Inside Routes:
+   <Route
+     path="/candidates/upload"
+     element={
+       <ProtectedRoute>
+         <UploadResumePage />
+       </ProtectedRoute>
+     }
+   />
+```
+
+5. UPDATE DASHBOARD WITH LINK
+   
+   File: admin-frontend/src/pages/DashboardPage.tsx
+   
+   Update Quick Actions section:
+```typescript
+   <button
+     onClick={() => navigate('/candidates/upload')}
+     className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition"
+   >
+     <p className="font-medium text-gray-900">Upload Resume</p>
+     <p className="text-sm text-gray-600 mt-1">
+       Add a new candidate
+     </p>
+   </button>
+```
+
+TESTING CHECKLIST:
+□ Can select PDF file from file input
+□ Non-PDF files rejected with error message
+□ Upload button disabled until file selected
+□ Resume uploads successfully to backend
+□ AI extracts candidate information correctly
+□ All parsed data (name, skills, projects, etc.) displays

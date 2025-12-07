@@ -6,6 +6,7 @@ import os
 
 from app.core.database import connect_to_mongo, close_mongo_connection
 from app.core.config import ADMIN_FRONTEND_URL, CANDIDATE_FRONTEND_URL
+from app.api import auth
 
 load_dotenv()
 
@@ -40,6 +41,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(auth.router)
 
 
 @app.get("/")

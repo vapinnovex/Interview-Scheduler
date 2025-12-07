@@ -1,12 +1,12 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr
 from typing import Optional
 from datetime import datetime
 
 
 class UserCreate(BaseModel):
+    full_name: str
     email: EmailStr
     password: str
-    full_name: str
 
 
 class UserLogin(BaseModel):
@@ -14,28 +14,13 @@ class UserLogin(BaseModel):
     password: str
 
 
-class User(BaseModel):
-    id: str = Field(alias="_id")
-    email: str
-    full_name: str
-    role: str
-    created_at: datetime
-
-    class Config:
-        populate_by_name = True
-
-
 class UserResponse(BaseModel):
-    id: str = Field(alias="_id")
-    email: str
+    id: Optional[str]
     full_name: str
-    role: str
-
-    class Config:
-        populate_by_name = True
+    email: EmailStr
+    role: Optional[str] = "admin"
 
 
 class Token(BaseModel):
     access_token: str
     token_type: str
-    user: UserResponse
